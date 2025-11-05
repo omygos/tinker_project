@@ -18,16 +18,14 @@ import kotlinx.coroutines.launch
 
 class DetailActivity : AppCompatActivity() {
 
-    // ✅ ADDED: ViewBinding reference
+
     private lateinit var binding: ActivityDetailBinding
 
-    // ❌ REMOVED: No longer need individual lateinit vars for charts
-    // private lateinit var tempChart: LineChart
-    // ...etc
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // ✅ UPDATED: Inflate and set content view using ViewBinding
+
         binding = ActivityDetailBinding.inflate(layoutInflater)
         setContentView(binding.root)
 

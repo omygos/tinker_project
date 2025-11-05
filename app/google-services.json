@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "804854325669",
+    "project_id": "cattler-project",
+    "storage_bucket": "cattler-project.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:804854325669:android:f2a8df616630f05426484c",
+        "android_client_info": {
+          "package_name": "com.example.cattler"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDKLfxN1Y1L2SQNKa-eAMFc2Ypo9CMcdSI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
