@@ -74,6 +74,19 @@ dependencies {
     // --- Firebase for Notifications (Kept) ---
     implementation(platform("com.google.firebase:firebase-bom:33.2.0"))
     implementation("com.google.firebase:firebase-messaging-ktx")
+    // --- ✅ ADDED: MQTT Paho Client ---
+    // ✅ ADD THIS LINE TO FIX THE CRASH
+//    implementation("androidx.legacy:legacy-support-v4:1.0.0")
+
+
+// implementation("androidx.legacy:legacy-support-v4:1.0.0")
+    // implementation("org.eclipse.paho:org.eclipse.paho.android.service:1.1.1")
+    // implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.1.1")
+
+//    implementation("org.eclipse.paho:org.eclipse.paho.android.service:1.1.1")
+//    implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.1.1")
+    implementation("com.github.hannesa2:paho.mqtt.android:3.3.5")
+
 
     // --- Testing (Kept) ---
     testImplementation(libs.junit)

@@ -32,6 +32,11 @@
             </intent-filter>
         </activity>
 
+        <!-- Paho MQTT Service -->
+        <service
+            android:name="org.eclipse.paho.android.service.MqttService"
+            android:exported="false" />
+
         <!-- Firebase Messaging Service -->
         <service
             android:name=".MyFirebaseMessagingService"

@@ -6,37 +6,52 @@ import android.util.Log
 import android.view.MenuItem
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
-import com.example.cattler.databinding.ActivityDetailBinding // ✅ ADDED: ViewBinding import
-import com.github.mikephil.charting.charts.LineChart
+import com.example.cattler.databinding.ActivityDetailBinding
+import com.github.mikephil.charting.animation.Easing
+import com.github.mikephil.charting.components.Legend
+import com.github.mikephil.charting.components.LimitLine
 import com.github.mikephil.charting.components.XAxis
+import com.github.mikephil.charting.components.YAxis
 import com.github.mikephil.charting.data.Entry
 import com.github.mikephil.charting.data.LineData
 import com.github.mikephil.charting.data.LineDataSet
-import kotlinx.coroutines.delay
+import com.github.mikephil.charting.formatter.ValueFormatter
+import com.github.mikephil.charting.highlight.Highlight
+import com.github.mikephil.charting.listener.OnChartValueSelectedListener
 import kotlinx.coroutines.launch
+import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.*
 
 class DetailActivity : AppCompatActivity() {
 
-
     private lateinit var binding: ActivityDetailBinding
+    private lateinit var mqttClient: MqttClientHelper
+    private var currentCowId: String? = null
 
-
+    // Store timestamps for X-axis labels
+    private val timestamps = mutableListOf<String>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         binding = ActivityDetailBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
 
         val cowId = intent.getStringExtra("COW_ID")
+        currentCowId = cowId
 
         if (cowId != null) {
-            supportActionBar?.title = "History for: $cowId"
-            loadMockHistoryData(cowId)
-            // fetchCattleHistory(cowId) // Uncomment for real data
+            supportActionBar?.title = "Live Monitoring: $cowId"
+
+            // 1. Load the last 20 points from history
+            fetchCattleHistory(cowId)
+
+            // 2. Connect to MQTT for live updates
+            initMqtt(cowId)
         } else {
             Log.e("DetailActivity", "No COW_ID was passed to this activity.")
             finish()
@@ -51,35 +66,67 @@ class DetailActivity : AppCompatActivity() {
         return super.onOptionsItemSelected(item)
     }
 
-    private fun loadMockHistoryData(cowId: String) {
-        // ✅ UPDATED: Use binding
-        binding.progressBarDetail.visibility = View.VISIBLE
-        binding.chartsContainer.visibility = View.INVISIBLE
-
-        lifecycleScope.launch {
-            delay(1000)
-            val mockHistory = getMockHistoryForCow(cowId)
-
-            if (mockHistory.isNotEmpty()) {
-                setupTemperatureChart(mockHistory)
-                setupDistanceChart(mockHistory)
-            } else {
-                Log.w("DetailActivity", "Received empty mock history for $cowId")
+    private fun initMqtt(cowId: String) {
+        mqttClient = MqttClientHelper(this)
+        mqttClient.connect(
+            onSuccess = {
+                mqttClient.subscribe("lora/data") { payload ->
+                    addLiveEntryToGraphs(payload)
+                }
+            },
+            onFailure = {
+                Log.e("DetailActivity_MQTT", "Could not connect to broker.")
             }
+        )
+    }
 
-            binding.progressBarDetail.visibility = View.GONE
-            binding.chartsContainer.visibility = View.VISIBLE
+    private fun addLiveEntryToGraphs(payload: String) {
+        try {
+            val json = JSONObject(payload)
+            val cowId = json.getString("id")
+
+            // Only update if message is for THIS cow
+            if (cowId != currentCowId) return
+
+            val distance = json.getDouble("distance").toFloat()
+            val temp = json.getDouble("temperature").toFloat()
+
+            // Generate timestamp for the new point
+            val timestamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+            timestamps.add(timestamp)
+
+            runOnUiThread {
+                // Update Temperature Chart with Stock Effect
+                updateChartWithStockEffect(binding.chartTemperature, temp)
+
+                // Update Distance Chart with Stock Effect
+                updateChartWithStockEffect(binding.chartDistance, distance)
+            }
+        } catch (e: Exception) {
+            Log.e("DetailActivity_MQTT", "Failed to parse live data", e)
         }
     }
 
-    private fun getMockHistoryForCow(cowId: String): List<DataPoint> {
-        return listOf(
-            DataPoint("10:00", 38.5, 15),
-            DataPoint("10:05", 38.6, 17),
-            DataPoint("10:10", 38.5, 16),
-            DataPoint("10:15", 38.7, 18),
-            DataPoint("10:20", 38.8, 20)
-        )
+    /**
+     * ✅ THE MAGIC FUNCTION: Adds a point and scrolls like a stock ticker.
+     */
+    private fun updateChartWithStockEffect(chart: com.github.mikephil.charting.charts.LineChart, newValue: Float) {
+        val data = chart.data ?: return
+        val set = data.getDataSetByIndex(0) ?: return
+
+        // 1. Add new entry
+        data.addEntry(Entry(set.entryCount.toFloat(), newValue), 0)
+
+        // 2. Notify changes
+        data.notifyDataChanged()
+        chart.notifyDataSetChanged()
+
+        // 3. STOCK MARKET EFFECT:
+        // Limit view to 20 points. If we have 21, it zooms in.
+        chart.setVisibleXRangeMaximum(20f)
+
+        // Scroll to the very end (the newest point)
+        chart.moveViewToX(data.entryCount.toFloat())
     }
 
     private fun fetchCattleHistory(cowId: String) {
@@ -88,15 +135,21 @@ class DetailActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             try {
-                val historyData = RetrofitInstance.api.getCattleHistory(cowId)
+                // Fetch ALL history
+                val fullHistory = RetrofitInstance.api.getCattleHistory(cowId)
 
-                if (historyData.isNotEmpty()) {
-                    setupTemperatureChart(historyData)
-                    setupDistanceChart(historyData)
+                if (fullHistory.isNotEmpty()) {
+                    // ✅ Take only the last 20 points for a clean start
+                    val recentHistory = fullHistory.takeLast(20)
+
+                    timestamps.clear()
+                    timestamps.addAll(recentHistory.map { it.timestamp })
+
+                    setupTemperatureChart(recentHistory)
+                    setupDistanceChart(recentHistory)
                 } else {
-                    Log.w("DetailActivity", "Received empty history for $cowId")
+                    Log.w("DetailActivity", "Received empty history")
                 }
-
             } catch (e: Exception) {
                 Log.e("DetailActivity", "Error fetching history: ${e.message}", e)
             } finally {
@@ -106,49 +159,112 @@ class DetailActivity : AppCompatActivity() {
         }
     }
 
-    private fun setupTemperatureChart(history: List<DataPoint>) {
-        val entries = history.mapIndexed { index, dataPoint ->
-            Entry(index.toFloat(), dataPoint.temperature.toFloat())
-        }
-        val dataSet = LineDataSet(entries, "Temperature (°C)")
-        dataSet.color = Color.RED
-        dataSet.valueTextColor = Color.BLACK
-        dataSet.setCircleColor(dataSet.color)
-        dataSet.lineWidth = 2.5f
-        dataSet.circleRadius = 4f
-        dataSet.setDrawCircleHole(false)
-
-        val lineData = LineData(dataSet)
-
-        // ✅ UPDATED: Use binding.tempChart
-        binding.chartTemperature.data = lineData
-        binding.chartTemperature.description.text = "Temperature trend"
-        binding.chartTemperature.description.textSize = 12f
-        binding.chartTemperature.xAxis.position = XAxis.XAxisPosition.BOTTOM
-        binding.chartTemperature.axisRight.isEnabled = false
-        binding.chartTemperature.invalidate()
+    override fun onDestroy() {
+        super.onDestroy()
+        if (::mqttClient.isInitialized) mqttClient.disconnect()
     }
 
-    private fun setupDistanceChart(history: List<DataPoint>) {
-        val entries = history.mapIndexed { index, dataPoint ->
-            Entry(index.toFloat(), dataPoint.distance.toFloat())
+    private fun setupTemperatureChart(historyData: List<DataPoint>) {
+        val entries = historyData.mapIndexed { index, item ->
+            Entry(index.toFloat(), item.temperature.toFloat())
         }
-        val dataSet = LineDataSet(entries, "Distance (m)")
-        dataSet.color = Color.BLUE
-        dataSet.valueTextColor = Color.BLACK
-        dataSet.setCircleColor(dataSet.color)
-        dataSet.lineWidth = 2.5f
-        dataSet.circleRadius = 4f
-        dataSet.setDrawCircleHole(false)
+
+        val dataSet = LineDataSet(entries, "Temperature (°C)").apply {
+            color = Color.parseColor("#FF6B6B")
+            lineWidth = 3f
+
+            // ✅ STOCK LOOK: Disable circles for a smooth line
+            setDrawCircles(false)
+            setDrawValues(false)
+
+            setDrawFilled(true)
+            fillColor = Color.parseColor("#FF6B6B")
+            fillAlpha = 50
+            mode = LineDataSet.Mode.CUBIC_BEZIER // Smooth curves
+        }
 
         val lineData = LineData(dataSet)
+        binding.chartTemperature.data = lineData
 
-        // ✅ UPDATED: Use binding.distChart
+        styleChart(binding.chartTemperature, "Temperature")
+
+        // Initial animation
+        binding.chartTemperature.animateX(1000)
+    }
+
+    private fun setupDistanceChart(historyData: List<DataPoint>) {
+        val entries = historyData.mapIndexed { index, item ->
+            Entry(index.toFloat(), item.distance.toFloat())
+        }
+
+        val dataSet = LineDataSet(entries, "Distance (m)").apply {
+            color = Color.parseColor("#4ECDC4")
+            lineWidth = 3f
+
+            // ✅ STOCK LOOK: Disable circles
+            setDrawCircles(false)
+            setDrawValues(false)
+
+            setDrawFilled(true)
+            fillColor = Color.parseColor("#4ECDC4")
+            fillAlpha = 50
+            mode = LineDataSet.Mode.CUBIC_BEZIER
+        }
+
+        val lineData = LineData(dataSet)
         binding.chartDistance.data = lineData
-        binding.chartDistance.description.text = "Distance trend"
-        binding.chartDistance.description.textSize = 12f
-        binding.chartDistance.xAxis.position = XAxis.XAxisPosition.BOTTOM
-        binding.chartDistance.axisRight.isEnabled = false
-        binding.chartDistance.invalidate()
+
+        styleChart(binding.chartDistance, "Distance")
+        binding.chartDistance.animateX(1000)
+    }
+
+    private fun styleChart(chart: com.github.mikephil.charting.charts.LineChart, description: String) {
+        chart.apply {
+            this.description.text = description
+            this.description.textColor = Color.DKGRAY
+
+            setDrawGridBackground(false)
+            setBackgroundColor(Color.WHITE)
+            setTouchEnabled(true)
+            isDragEnabled = true
+            setScaleEnabled(true)
+            setPinchZoom(true)
+
+            legend.isEnabled = true
+            legend.textColor = Color.DKGRAY
+
+            xAxis.apply {
+                position = XAxis.XAxisPosition.BOTTOM
+                setDrawGridLines(false) // Cleaner look
+                textColor = Color.DKGRAY
+                granularity = 1f
+
+                // Custom Timestamp Formatter
+                valueFormatter = object : ValueFormatter() {
+                    override fun getFormattedValue(value: Float): String {
+                        val index = value.toInt()
+                        return if (index >= 0 && index < timestamps.size) {
+                            timestamps[index]
+                        } else {
+                            ""
+                        }
+                    }
+                }
+            }
+
+            axisLeft.apply {
+                setDrawGridLines(true)
+                gridColor = Color.parseColor("#E0E0E0")
+                textColor = Color.DKGRAY
+            }
+
+            axisRight.isEnabled = false
+
+            // ✅ Set the view port to "zoom in" if we have a lot of data
+            setVisibleXRangeMaximum(20f)
+
+            // Move to the end immediately
+            moveViewToX(data?.entryCount?.toFloat() ?: 0f)
+        }
     }
 }

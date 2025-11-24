@@ -8,6 +8,9 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class MyFirebaseMessagingService : FirebaseMessagingService() {
 
@@ -21,53 +24,55 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         super.onNewToken(token)
         Log.d(TAG, "Refreshed token: $token")
 
-        // **IMPORTANT ACTION FOR YOU:**
-        // You need to create a new API endpoint on your Pi
-        // (e.g., /api/register-device) and send this 'token'
-        // to it. Your Pi must store this token to know
-        // who to send messages to.
+        // ✅ Send token to your Raspberry Pi server
         sendTokenToServer(token)
     }
 
-    /**
-     * This is called when a message is received from Firebase
-     * while your app is in the foreground OR background.
-     */
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         super.onMessageReceived(remoteMessage)
 
         Log.d(TAG, "From: ${remoteMessage.from}")
 
         // Check if the message contains data (the info from your Pi)
-        remoteMessage.data.isNotEmpty().let {
+        if (remoteMessage.data.isNotEmpty()) {
             val title = remoteMessage.data["title"] ?: "Cattle Alert"
             val body = remoteMessage.data["body"] ?: "A cattle is out of range!"
 
             Log.d(TAG, "Message Title: $title")
             Log.d(TAG, "Message Body: $body")
 
-            // Call the function to show the notification
+            // Show the notification
             sendNotification(title, body)
         }
     }
 
+    /**
+     * ✅ Sends the FCM token to your Raspberry Pi backend.
+     */
     private fun sendTokenToServer(token: String) {
-        // This is where you would make a Retrofit call
-        // to your new server endpoint.
-        // e.g., lifecycleScope.launch {
-        //    RetrofitInstance.api.registerDevice(token)
-        // }
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                // Build your request body (you must have FcmTokenRequest data class)
+                val requestBody = FcmTokenRequest(token = token)
+
+                // Call your Retrofit endpoint
+                RetrofitInstance.api.registerDeviceToken(requestBody)
+
+                Log.d(TAG, "Token sent to server successfully.")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending token to server: ${e.message}", e)
+            }
+        }
     }
 
     /**
-     * Builds and displays the notification on the user's screen.
+     * Shows a notification when a message arrives from Firebase.
      */
     private fun sendNotification(title: String, messageBody: String) {
         val channelId = "cattle_alert_channel"
-
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-        // --- Create Notification Channel (Required for Android 8.0+) ---
+        // Create Notification Channel (for Android 8.0+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 channelId,
@@ -78,17 +83,16 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             }
             notificationManager.createNotificationChannel(channel)
         }
-        // --- End of Channel Code ---
 
         // Build the notification
         val notificationBuilder = NotificationCompat.Builder(this, channelId)
-            .setSmallIcon(R.mipmap.ic_launcher) // TODO: Change to a real alert icon
+            .setSmallIcon(R.mipmap.ic_launcher) // TODO: Replace with proper icon
             .setContentTitle(title)
             .setContentText(messageBody)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
 
         // Show the notification
-        notificationManager.notify(0 /* ID of notification */, notificationBuilder.build())
+        notificationManager.notify(0, notificationBuilder.build())
     }
 }
